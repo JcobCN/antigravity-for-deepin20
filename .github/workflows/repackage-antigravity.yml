@@ -1,0 +1,105 @@
+name: Repackage Antigravity for Deepin 20
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  repackage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y patchelf dpkg-dev binutils curl gnupg python3
+
+      - name: Setup Antigravity Repository
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://us-central1-apt.pkg.dev/doc/repo-signing-key.gpg | \
+            sudo gpg --dearmor --yes -o /etc/apt/keyrings/antigravity-repo-key.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/antigravity-repo-key.gpg] https://us-central1-apt.pkg.dev/projects/antigravity-auto-updater-dev/ antigravity-debian main" | \
+            sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
+          sudo apt-get update
+
+      - name: Download Original Packages
+        run: |
+          apt-get download antigravity
+          apt-get download libxkbfile1
+          echo "ANTIGRAVITY_DEB=$(ls antigravity_*.deb | head -n 1)" >> $GITHUB_ENV
+          echo "LIBXKBFILE_DEB=$(ls libxkbfile1_*.deb | head -n 1)" >> $GITHUB_ENV
+
+      - name: Extract and Repackage
+        run: |
+          # 创建工作目录
+          mkdir -p work/antigravity_mod work/libxkbfile_mod
+          
+          # 解压包
+          dpkg-deb -R $ANTIGRAVITY_DEB work/antigravity_mod
+          dpkg-deb -R $LIBXKBFILE_DEB work/libxkbfile_mod
+          
+          # 定义应用主目录 (相对于根目录)
+          # 注意：在重打包过程中，我们操作的是解压后的文件系统
+          ROOT_DIR="$(pwd)/work/antigravity_mod"
+          APP_REL_DIR="usr/share/antigravity"
+          APP_ABS_DIR="$ROOT_DIR/$APP_REL_DIR"
+          
+          # 集成动态库
+          SO_FILE=$(find work/libxkbfile_mod -name "libxkbfile.so.*" -type f | head -n 1)
+          SO_NAME=$(basename $SO_FILE)
+          cp "$SO_FILE" "$APP_ABS_DIR/"
+          
+          # 创建软链接
+          pushd "$APP_ABS_DIR"
+          ln -sf "$SO_NAME" libxkbfile.so.1
+          ln -sf "$SO_NAME" libxkbfile.so
+          popd
+          
+          # 自动查找并修改 RPATH
+          find "$ROOT_DIR" -type f -executable | while read -r target; do
+            # 跳过我们刚刚拷贝进去的库文件本身
+            [[ "$target" == *"$SO_NAME"* ]] && continue
+            
+            if ldd "$target" 2>/dev/null | grep -q "libxkbfile"; then
+              echo "Patching RPATH for: ${target#$ROOT_DIR}"
+              
+              target_dir=$(dirname "$target")
+              
+              # 使用 python 计算目标文件相对于 APP_ABS_DIR 的相对路径
+              rel_path=$(python3 -c "import os; print(os.path.relpath('$APP_ABS_DIR', '$target_dir'))")
+              
+              if [ "$rel_path" = "." ]; then
+                new_rpath="\$ORIGIN"
+              else
+                new_rpath="\$ORIGIN/$rel_path"
+              fi
+              
+              echo "  New RPATH: $new_rpath"
+              patchelf --set-rpath "$new_rpath" "$target"
+            fi
+          done
+          
+          # 修改控制文件移除依赖
+          CONTROL_FILE="work/antigravity_mod/DEBIAN/control"
+          # 移除 libxkbfile1 依赖及其后面的逗号，或者移除前面的逗号
+          sed -i 's/libxkbfile1 (>= [^)]*), //g' "$CONTROL_FILE"
+          sed -i 's/, libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
+          sed -i 's/libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
+          
+          # 重新打包
+          VERSION=$(grep "Version:" "$CONTROL_FILE" | awk '{print $2}')
+          OUTPUT_DEB="antigravity_${VERSION}_bundled_deepin20_amd64.deb"
+          dpkg-deb --build work/antigravity_mod "$OUTPUT_DEB"
+          echo "OUTPUT_DEB=$OUTPUT_DEB" >> $GITHUB_ENV
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-deepin20-deb
+          path: ${{ env.OUTPUT_DEB }}
