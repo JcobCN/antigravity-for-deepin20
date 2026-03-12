@@ -105,6 +105,12 @@ jobs:
           sed -i 's/libxkbfile1 (>= [^)]*), //g' "$CONTROL_FILE"
           sed -i 's/, libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
           sed -i 's/libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
+
+          # 移除会导致安装弹窗的 Debconf 模板和冗余脚本逻辑
+          rm -f work/antigravity_mod/DEBIAN/templates
+          # 简化 postinst，只保留必要的链接和权限设置，移除末尾的 Microsoft 仓库逻辑
+          # 我们查找 "if false; then" 这一行并删除它及其之后的所有内容，因为那是 Microsoft 的冗余代码
+          sed -i '/if false; then/,$d' work/antigravity_mod/DEBIAN/postinst
           
           # 重新打包
           VERSION=$(grep "Version:" "$CONTROL_FILE" | awk '{print $2}')
