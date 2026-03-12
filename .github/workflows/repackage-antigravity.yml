@@ -36,7 +36,7 @@ jobs:
           echo "Upstream version: $UPSTREAM_VERSION"
           
           # 获取 GitHub 最新 Release 版本 (去掉 v 前缀)
-          LATEST_RELEASE=$(gh release list --limit 1 | awk '{print $1}' | sed 's/^v//' || echo "none")
+          LATEST_RELEASE=$(gh release list --limit 1 | awk '{print $3}' | sed 's/^v//' || echo "none")
           echo "Latest release: $LATEST_RELEASE"
           
           if [ "$UPSTREAM_VERSION" = "$LATEST_RELEASE" ] && [ "${{ github.event_name }}" = "schedule" ]; then
