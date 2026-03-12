@@ -28,7 +28,29 @@ jobs:
             sudo tee /etc/apt/sources.list.d/antigravity.list > /dev/null
           sudo apt-get update
 
+      - name: Check for new version
+        id: check
+        run: |
+          # 获取 APT 仓库最新版本
+          UPSTREAM_VERSION=$(apt-cache policy antigravity | grep Candidate | awk '{print $2}')
+          echo "Upstream version: $UPSTREAM_VERSION"
+          
+          # 获取 GitHub 最新 Release 版本 (去掉 v 前缀)
+          LATEST_RELEASE=$(gh release list --limit 1 | awk '{print $1}' | sed 's/^v//' || echo "none")
+          echo "Latest release: $LATEST_RELEASE"
+          
+          if [ "$UPSTREAM_VERSION" = "$LATEST_RELEASE" ] && [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "No new version found and this is a scheduled run. Skipping."
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          else
+            echo "Proceeding with build (Reason: New version or non-scheduled trigger)."
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Download Original Packages
+        if: steps.check.outputs.should_run == 'true'
         run: |
           apt-get download antigravity
           apt-get download libxkbfile1
@@ -36,7 +58,9 @@ jobs:
           echo "LIBXKBFILE_DEB=$(ls libxkbfile1_*.deb | head -n 1)" >> $GITHUB_ENV
 
       - name: Extract and Repackage
+        if: steps.check.outputs.should_run == 'true'
         run: |
+          # ... (保持原有脚本内容不变)
           # 创建工作目录
           mkdir -p work/antigravity_mod work/libxkbfile_mod
           
@@ -45,7 +69,6 @@ jobs:
           dpkg-deb -R $LIBXKBFILE_DEB work/libxkbfile_mod
           
           # 定义应用主目录 (相对于根目录)
-          # 注意：在重打包过程中，我们操作的是解压后的文件系统
           ROOT_DIR="$(pwd)/work/antigravity_mod"
           APP_REL_DIR="usr/share/antigravity"
           APP_ABS_DIR="$ROOT_DIR/$APP_REL_DIR"
@@ -63,31 +86,22 @@ jobs:
           
           # 自动查找并修改 RPATH
           find "$ROOT_DIR" -type f -executable | while read -r target; do
-            # 跳过我们刚刚拷贝进去的库文件本身
             [[ "$target" == *"$SO_NAME"* ]] && continue
-            
             if ldd "$target" 2>/dev/null | grep -q "libxkbfile"; then
               echo "Patching RPATH for: ${target#$ROOT_DIR}"
-              
               target_dir=$(dirname "$target")
-              
-              # 使用 python 计算目标文件相对于 APP_ABS_DIR 的相对路径
               rel_path=$(python3 -c "import os; print(os.path.relpath('$APP_ABS_DIR', '$target_dir'))")
-              
               if [ "$rel_path" = "." ]; then
                 new_rpath="\$ORIGIN"
               else
                 new_rpath="\$ORIGIN/$rel_path"
               fi
-              
-              echo "  New RPATH: $new_rpath"
               patchelf --set-rpath "$new_rpath" "$target"
             fi
           done
           
           # 修改控制文件移除依赖
           CONTROL_FILE="work/antigravity_mod/DEBIAN/control"
-          # 移除 libxkbfile1 依赖及其后面的逗号，或者移除前面的逗号
           sed -i 's/libxkbfile1 (>= [^)]*), //g' "$CONTROL_FILE"
           sed -i 's/, libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
           sed -i 's/libxkbfile1 (>= [^)]*)//g' "$CONTROL_FILE"
@@ -100,12 +114,14 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Upload Artifact
+        if: steps.check.outputs.should_run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: antigravity-deepin20-deb
           path: ${{ env.OUTPUT_DEB }}
 
       - name: Create Release
+        if: steps.check.outputs.should_run == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.OUTPUT_DEB }}
