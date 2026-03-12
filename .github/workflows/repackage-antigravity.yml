@@ -109,7 +109,7 @@ jobs:
           # 重新打包
           VERSION=$(grep "Version:" "$CONTROL_FILE" | awk '{print $2}')
           OUTPUT_DEB="antigravity_${VERSION}_bundled_deepin20_amd64.deb"
-          dpkg-deb --build work/antigravity_mod "$OUTPUT_DEB"
+          dpkg-deb -Zxz --build work/antigravity_mod "$OUTPUT_DEB"
           echo "OUTPUT_DEB=$OUTPUT_DEB" >> $GITHUB_ENV
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
