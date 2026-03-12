@@ -97,9 +97,26 @@ jobs:
           OUTPUT_DEB="antigravity_${VERSION}_bundled_deepin20_amd64.deb"
           dpkg-deb --build work/antigravity_mod "$OUTPUT_DEB"
           echo "OUTPUT_DEB=$OUTPUT_DEB" >> $GITHUB_ENV
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: antigravity-deepin20-deb
           path: ${{ env.OUTPUT_DEB }}
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.OUTPUT_DEB }}
+          tag_name: v${{ env.VERSION }}
+          name: Antigravity Bundled ${{ env.VERSION }}
+          body: |
+            Auto-repackaged Antigravity for Deepin 20.
+            - Bundled `libxkbfile1` dependency.
+            - Fixed RPATH for all binaries and node modules.
+            - Removed system-level `libxkbfile1` requirement.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
