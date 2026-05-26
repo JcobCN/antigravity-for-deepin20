@@ -31,6 +31,8 @@ jobs:
       - name: Check for new version
         id: check
         run: |
+          ALL_ANTI=$(apt-cache policy antigravity)
+          echo "$ALL_ANTI"
           # 获取 APT 仓库最新版本
           UPSTREAM_VERSION=$(apt-cache policy antigravity | grep Candidate | awk '{print $2}')
           echo "Upstream version: $UPSTREAM_VERSION"
